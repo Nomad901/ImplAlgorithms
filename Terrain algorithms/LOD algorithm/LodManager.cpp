@@ -1,0 +1,214 @@
+#include "LodManager.h"
+
+LodManager::LodManager(uint32_t pPatchSize, uint32_t pNumPatchesX, uint32_t pNumPatchesZ, 
+					   float pDistanceOfPatches, float pWorldScale)
+{
+	initLodManger(pPatchSize, pNumPatchesX, pNumPatchesZ, pDistanceOfPatches, pWorldScale);
+}
+
+int32_t LodManager::initLodManger(uint32_t pPatchSize, uint32_t pNumPatchesX, uint32_t pNumPatchesZ, 
+								  float pDistanceOfPatches, float pWorldScale)
+{
+	mPatchSize = pPatchSize;
+	mNumPatchesX = pNumPatchesX;
+	mNumPatchesZ = pNumPatchesZ;
+	mWorldScale = pWorldScale;
+
+	calcMaxLOD();
+
+	/*
+		patches - group of quads; like chanks in minecraft;
+	*/
+	PatchLod emptyPatchLod;
+	mPatchesLod.resize(mNumPatchesX * mNumPatchesZ);
+	for (size_t x = 0; x < mNumPatchesX; ++x)
+	{
+		mPatchesLod[x].resize(mNumPatchesZ);
+		for (size_t z = 0; z < mNumPatchesZ; ++z)
+		{
+			mPatchesLod[x][z] = emptyPatchLod;
+		}
+	}
+
+	/*
+		regions - group of patches;
+	*/
+	mRegions.resize(mMaxLod + 1);
+	calcLodRegions(pDistanceOfPatches);
+
+	return mMaxLod;
+}
+
+const LodManager::PatchLod& LodManager::getPatchLod(int32_t pPatchX, int32_t pPatchZ) const noexcept
+{
+	return mPatchesLod.at(pPatchX).at(pPatchZ);
+}
+
+void LodManager::printLodMap()
+{
+	for (int32_t lodMapZ = mNumPatchesZ - 1; lodMapZ >= 0; --lodMapZ)
+	{
+		std::cout << std::format("Lod map Z: {}. ", lodMapZ);
+		for (int32_t lodMapX = 0; lodMapX < mNumPatchesX; ++lodMapX)
+		{
+			std::cout << std::format("Core: {} ", lodMapX, mPatchesLod[lodMapX][lodMapZ].mCore);
+		}
+		std::cout<< '\n';
+	}
+}
+
+void LodManager::update(const glm::vec3& pCameraPos)
+{
+	updateLodMapPass1(pCameraPos);
+	updateLodMapPass2(pCameraPos);
+}
+
+void LodManager::calcLodRegions(float pDistanceOfPatches)
+{
+	/*
+		sum is created for progressive overload of chanks. 
+		like it will be divided on the distance of patches and then it will create 
+		a progressive incrementation. like - 0-100; 100-300; 300-600; 600-1000.
+	*/
+	int32_t sum = 0;
+	for (uint32_t i = 0; i <= mMaxLod; ++i)
+	{
+		sum += (i + 1);
+	}
+
+	/*
+		here we populate the regions in order to make progressive chank sizes;
+	*/
+	float x = pDistanceOfPatches / static_cast<float>(sum);
+	int32_t temp = 0;
+	for (int32_t i = 0; i <= mMaxLod; ++i)
+	{
+		int32_t currRange = static_cast<int32_t>(x * (i + 1));
+		mRegions[i] = temp + currRange;
+		temp += currRange;
+	}
+}
+
+void LodManager::calcMaxLOD()
+{
+	/*
+		finding out how many segments we have from our initial size of a patch; 
+		segments - kinda gaps between vertices. then more vertices - than more segments - than more quality;
+		if we have 9 vertices, then we have 8 segments - 8 gaps between vertices;
+	*/
+	int32_t numSegments = mPatchSize - 1;
+
+	/*
+		segments need to be power of two so that when we reduce quality (LOD), 
+		the vertices at patch borders always line up perfectly between neighboring patches.
+		ceilf - round a value to more. like 2.57f - will be 3.0f;
+		floorf - round a value to less. 2.57f - 2.0f; 
+	*/
+	auto result1 = ceilf(log2f(static_cast<float>(numSegments)));
+	auto result2 = floorf(log2f(static_cast<float>(numSegments)));
+	if (result1 != result2)
+	{
+		std::cout << std::format("The number of vertices in the patch needs to be a power of two. Result1: {}, Result2: {}\n",
+																								  result1,	   result2);
+		return;
+	}
+
+	int32_t patchSizeLog2 = static_cast<int32_t>(log2f(static_cast<float>(numSegments)));
+	mMaxLod = patchSizeLog2 - 1;
+}
+
+void LodManager::updateLodMapPass1(const glm::vec3& pCameraPos)
+{
+	int32_t centerStep = mPatchSize / 2;
+
+	for (size_t lodMapZ = 0; lodMapZ < mNumPatchesZ; ++lodMapZ)
+	{
+		for (size_t lodMapX = 0; lodMapX < mNumPatchesX; ++lodMapX)
+		{
+			int32_t x = lodMapX * (mPatchSize - 1) + centerStep;
+			int32_t z = lodMapZ * (mPatchSize - 1) + centerStep;
+			
+			glm::vec3 patchCenter = glm::vec3(x * static_cast<float>(mWorldScale),
+											  0.0f, 
+											  z * static_cast<float>(mWorldScale));
+
+			float distanceToCamera = glm::length(patchCenter - pCameraPos);
+
+			int32_t coreLod = getDistanceToLod(distanceToCamera);
+
+			PatchLod* patchLod = &mPatchesLod[lodMapX][lodMapZ];
+			patchLod->mCore = coreLod;
+		}
+	}
+}
+
+void LodManager::updateLodMapPass2(const glm::vec3& pCameraPos)
+{
+	int32_t step = mPatchSize / 2;
+
+	for (size_t lodMapZ = 0; lodMapZ < mNumPatchesZ; ++lodMapZ)
+	{
+		for (size_t lodMapX = 0; lodMapX < mNumPatchesX; ++lodMapX)
+		{
+			int32_t coreLod = mPatchesLod[lodMapX][lodMapZ].mCore;
+
+			int32_t indexLeft   = lodMapX;
+			int32_t indexRight  = lodMapX;
+			int32_t indexTop    = lodMapZ;
+			int32_t indexBottom = lodMapZ;
+
+			if (lodMapX > 0)
+			{
+				indexLeft--;
+				
+				if (mPatchesLod[indexLeft][lodMapZ].mCore > coreLod)
+					mPatchesLod.at(lodMapX).at(lodMapZ).mLeft = 1;
+				else
+					mPatchesLod.at(lodMapX).at(lodMapZ).mLeft = 0;
+			}
+			if (lodMapX < mNumPatchesX - 1)
+			{
+				indexRight++;
+				
+				if (mPatchesLod[indexRight][lodMapZ].mCore > coreLod)
+					mPatchesLod.at(lodMapX).at(lodMapZ).mRight = 1;
+				else 
+					mPatchesLod.at(lodMapX).at(lodMapZ).mRight = 0;
+			}
+			if (lodMapZ > 0)
+			{
+				indexBottom--;
+
+				if (mPatchesLod[lodMapX][indexBottom].mCore > coreLod)
+					mPatchesLod.at(lodMapX).at(lodMapZ).mBottom = 1;
+				else
+					mPatchesLod.at(lodMapX).at(lodMapZ).mBottom = 0;
+			}
+			if (lodMapZ < mNumPatchesZ - 1)
+			{
+				indexTop++;
+				
+				if (mPatchesLod[lodMapX][indexTop].mCore > coreLod)
+					mPatchesLod.at(lodMapX).at(lodMapZ).mTop = 1;
+				else
+					mPatchesLod.at(lodMapX).at(lodMapZ).mTop = 0;
+			}
+		}
+	}
+}
+
+int32_t LodManager::getDistanceToLod(float pDistance)
+{
+	int32_t lod = mMaxLod;
+
+	for (uint32_t i = 0; i <= mMaxLod; ++i)
+	{
+		if (pDistance < mRegions[i])
+		{
+			lod = i;
+			break;
+		}
+	}
+
+	return lod;
+}
