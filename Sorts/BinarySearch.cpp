@@ -1,5 +1,9 @@
 uint32_t SkinnedMesh::findInterpolatedIndex(IndexType pIndexType, float pAnimTicks, const aiNodeAnim* pAiNodeAnim)
 {
+	// ---------------------------------------------------
+	//	THIS IS JUST A CONTEXT, THE SEARCH ON THE BOTTOM
+	// ---------------------------------------------------
+
 	uint32_t numKeys = 0;
 
 	switch (pIndexType)
@@ -40,6 +44,9 @@ uint32_t SkinnedMesh::findInterpolatedIndex(IndexType pIndexType, float pAnimTic
 	if (pAnimTicks >= lastKeyTime)
 		return numKeys - 2;
 
+	// ---------------------------------------
+	//	BINARY SEARCH
+	// ---------------------------------------
 	uint32_t low = 0;
 	uint32_t high = numKeys - 1;
 	uint32_t result = 0;
