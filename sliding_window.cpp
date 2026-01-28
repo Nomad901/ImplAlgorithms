@@ -3,8 +3,6 @@ int32_t getMaxSumSubArray(const std::vector<int32_t>& pNumbers, int32_t pSizeSub
 	int32_t sizeNumbers = pNumbers.size();
 	if (sizeNumbers < pSizeSubArray)
 		return -1;
-	if (pNumbers.size() == 1)
-		return pNumbers[0];
 
 	int32_t firstWindowSum = 0;
 	for (size_t i = 0; i < pSizeSubArray; ++i)
